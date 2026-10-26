@@ -65,7 +65,7 @@ def prepare(
         "format": 1,
         "execution_id": uuid.uuid4().hex,
         "workflow_run_id": os.environ.get("GITHUB_RUN_ID"),
-        "source_sha": os.environ.get("GITHUB_SHA"),
+        "source_sha": os.environ.get("PC_UPGRADE_SOURCE_SHA", os.environ.get("GITHUB_SHA")),
         "policy_sha256": gate.sha256(root / gate.MANIFEST),
         "target_version": gate.wheel_version(wheel),
         "target_wheel": wheel.name,
@@ -96,7 +96,10 @@ def read_plan(root: Path, prepared: Path) -> tuple[dict[str, Any], Path]:
     plan = json.loads((prepared / "plan.json").read_text(encoding="utf-8"))
     gate.require(plan["format"] == 1, "Unknown parallel upgrade plan format")
     gate.require(plan["workflow_run_id"] == os.environ.get("GITHUB_RUN_ID"), "Evidence belongs to another workflow run")
-    gate.require(plan["source_sha"] == os.environ.get("GITHUB_SHA"), "Evidence belongs to another checkout")
+    gate.require(
+        plan["source_sha"] == os.environ.get("PC_UPGRADE_SOURCE_SHA", os.environ.get("GITHUB_SHA")),
+        "Evidence belongs to another checkout",
+    )
     gate.require(plan["policy_sha256"] == gate.sha256(root / gate.MANIFEST), "Upgrade policy changed after preparation")
     inputs = prepared / "inputs"
     files = list(inputs.iterdir())

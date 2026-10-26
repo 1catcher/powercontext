@@ -132,7 +132,7 @@ installation pins are synchronized.
 `release/upgrade-support.json` declares the target version, source-version selection policy, backends, and
 configurations. `automatic_sources` keeps 1.3.0 as its fixed baseline; explicit `cases` are empty.
 The catalog declares twelve cases: one source × three backends × vectors enabled/disabled × Code enabled/disabled.
-Publication requires the ten automatic cases to pass. The two embedded seekDB configurations with Code enabled
+Normal publication requires the ten automatic cases to pass. The two embedded seekDB configurations with Code enabled
 are temporarily manual-only because of native DDL waits; they remain unverified and are excluded from supported
 upgrade declarations. Passing the automatic gate does not establish complete twelve-case acceptance.
 The target is always the actual wheel built by CI. Future target releases keep testing 1.3.0;
@@ -193,10 +193,47 @@ seekDB runs embedded in a temporary runner directory. PR and publication jobs st
 container, wait for its MySQL tenant, archive diagnostics, and remove it even on failure. No external database
 credentials are needed. Unavailable backends fail instead of being skipped. Historical rejection regressions are
 not part of the positive acceptance gate. Administrators must make this job required in branch protection.
-The release workflow gates distribution upload, PyPI publication, and release assets on the acceptance result and
+By default, the release workflow gates distribution upload, PyPI publication, and release assets on the acceptance result and
 archives its evidence. It runs after `release.published`, so it cannot prevent the earlier manual publication of
 the GitHub Release page: run the command above before that action. `make publish` requires
 `UPGRADE_RELEASE_NOTES=/path/to/release-notes.md` and runs the same gate before uploading packages.
+
+### Manual publication without upgrade acceptance
+
+The **Release** workflow has a `workflow_dispatch` input named `skip_upgrade_acceptance`, defaulting to `false`.
+Enable it only to publish for new databases without claiming that existing databases can be upgraded. This does
+not change `release/upgrade-support.json`, certify a migration path, or relax the default release and PR gates.
+The target policy must remain `upgrade-required` when using this option.
+
+For an existing published Release such as `powercontext-v1.4.1`:
+
+1. Add this exact English notice to its GitHub Release body:
+
+   ```text
+   Upgrade acceptance was skipped for this release. Use only new databases; upgrades of existing databases are not supported.
+   ```
+
+2. In **Actions → Release → Run workflow**, select the repository's default branch (`master`), set
+   `release_tag` to `powercontext-v1.4.1`, and enable `skip_upgrade_acceptance`. The workflow definition must
+   already be merged into the default branch. Select the tag through the input, not the workflow branch selector.
+
+   ```bash
+   gh workflow run release.yml --repo oceanbase/powercontext --ref master \
+     -f release_tag=powercontext-v1.4.1 -f skip_upgrade_acceptance=true
+   ```
+
+The workflow resolves the existing tag to a commit and builds that commit; it does not move the tag or package
+the current default branch. It reads current Release notes rather than reusing the failed run's event payload.
+Version checks, synchronized release references, policy consistency, package metadata checks, an sdist rebuild
+comparison, clean installation, dependency checks, and the new-database Server/MCP/Memory smoke test remain
+mandatory. Only then can the exact checked distributions reach PyPI and GitHub Release assets. Post-publication
+verification and website deployment remain enabled, using the selected release target.
+
+The `release-without-upgrades` artifact records the tag, source commit, actor, run, distribution hashes, and
+`upgrade_acceptance: skipped`; the run summary also states that existing-database upgrades are unsupported.
+Leaving the option disabled runs the normal automatic upgrade matrix and support-declaration checks.
+
+### General release validation
 
 Run the checks for the complete release changes, including generated contracts and documentation:
 

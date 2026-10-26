@@ -412,13 +412,18 @@ def test_supported_fixed_source_executes_every_backend(release, monkeypatch):
     assert len(result["cases"]) == len(result["resolved_matrix"]["required_cases"]) == 3
 
 
-def test_publishing_jobs_depend_on_nonoptional_preupload_upgrade_gate():
+def test_publishing_jobs_require_upgrade_acceptance_unless_manually_bypassed():
     root = Path(__file__).parents[1]
     workflow = yaml.safe_load((root / ".github/workflows/release.yml").read_text())
     build = workflow["jobs"]["release-build"]
     assert build["uses"] == "./.github/workflows/upgrade-release.yml"
     assert build["with"]["release"] is True
     assert build["with"]["selection"] == "automatic"
+    assert build["with"]["skip_upgrade_acceptance"] == (
+        "${{ github.event_name == 'workflow_dispatch' && inputs.skip_upgrade_acceptance }}"
+    )
+    events = workflow.get("on", workflow.get(True))  # PyYAML's YAML 1.1 parser treats "on" as True.
+    assert events["workflow_dispatch"]["inputs"]["skip_upgrade_acceptance"]["default"] is False
     assert not build.get("continue-on-error")
     shared = yaml.safe_load((root / ".github/workflows/upgrade-release.yml").read_text())["jobs"]
     prepare = shared["prepare"]["steps"]
@@ -434,7 +439,8 @@ def test_publishing_jobs_depend_on_nonoptional_preupload_upgrade_gate():
     assert shared["collect"]["needs"] == ["prepare", "cases"]
     assert any('test "$CASE_JOBS_RESULT" = success' in step.get("run", "") for step in steps)
     for name in ("pypi-publish", "release-assets"):
-        assert workflow["jobs"][name]["needs"] == "release-build"
+        dependencies = workflow["jobs"][name]["needs"]
+        assert "release-build" in ([dependencies] if isinstance(dependencies, str) else dependencies)
     main = yaml.safe_load((root / ".github/workflows/master.yml").read_text())["jobs"]
     assert main["upgrade-acceptance"]["uses"] == build["uses"]
     verdict = main["upgrade-release-gate"]
@@ -1040,6 +1046,22 @@ def test_parallel_workers_reject_another_run(parallel_reports, monkeypatch):
     monkeypatch.setenv("GITHUB_RUN_ID", "another-run")
     with pytest.raises(gate.GateError, match="another workflow"):
         parallel.collect(root, prepared, reports, root / "accepted")
+
+
+def test_manual_release_evidence_tracks_target_checkout_not_workflow_commit(release, monkeypatch):
+    root, wheel, _ = release
+    dist = root / "dist"
+    dist.mkdir()
+    shutil.copyfile(wheel, dist / wheel.name)
+    monkeypatch.setenv("GITHUB_SHA", "workflow-commit")
+    monkeypatch.setenv("PC_UPGRADE_SOURCE_SHA", "release-commit")
+    prepared = root / "prepared"
+    parallel.prepare(root, dist, prepared, release=False, release_notes=None)
+    plan, _ = parallel.read_plan(root, prepared)
+    assert plan["source_sha"] == "release-commit"
+    monkeypatch.setenv("PC_UPGRADE_SOURCE_SHA", "another-release-commit")
+    with pytest.raises(gate.GateError, match="another checkout"):
+        parallel.read_plan(root, prepared)
 
 
 def test_parallel_failed_case_still_records_failure_and_allows_other_workers(release, monkeypatch):
