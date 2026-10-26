@@ -56,11 +56,15 @@ def run_release_step(tmp_path: Path):
         workflow = yaml.safe_load(
             (Path(__file__).parents[1] / ".github" / "workflows" / workflow_name).read_text(encoding="utf-8")
         )
-        job, step_name = (
-            ("release-build", "Verify package version from Release tag")
-            if workflow_name == "release.yml"
-            else ("verify", "Resolve release metadata")
-        )
+        if workflow_name == "release.yml":
+            # Follow the publishing workflow's real call into shared acceptance.
+            # Running a copied check would miss drift in the release entry point.
+            build = workflow["jobs"]["release-build"]
+            assert build["with"]["release"] is True
+            workflow = yaml.safe_load((Path(__file__).parents[1] / build["uses"]).read_text(encoding="utf-8"))
+            job, step_name = "prepare", "Verify package version from Release tag"
+        else:
+            job, step_name = "verify", "Resolve release metadata"
         command = next(step["run"] for step in workflow["jobs"][job]["steps"] if step.get("name") == step_name)
         result = subprocess.run(
             [bash, "-eu", "-c", command],
