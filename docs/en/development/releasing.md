@@ -131,7 +131,10 @@ installation pins are synchronized.
 
 `release/upgrade-support.json` declares the target version, source-version selection policy, backends, and
 configurations. `automatic_sources` keeps 1.3.0 as its fixed baseline; explicit `cases` are empty.
-The gate requires twelve cases: one source × three backends × vectors enabled/disabled × Code enabled/disabled.
+The catalog declares twelve cases: one source × three backends × vectors enabled/disabled × Code enabled/disabled.
+Publication requires the ten automatic cases to pass. The two embedded seekDB configurations with Code enabled
+are temporarily manual-only because of native DDL waits; they remain unverified and are excluded from supported
+upgrade declarations. Passing the automatic gate does not establish complete twelve-case acceptance.
 The target is always the actual wheel built by CI. Future target releases keep testing 1.3.0;
 intervening releases are not added automatically. The registered 1.4.0 bridge remains implemented but is outside
 CI upgrade acceptance, so a passing gate does not certify its upgrade path. Source wheel URLs and SHA-256s are resolved
@@ -183,7 +186,8 @@ policy validation alone does not establish an upgrade path. Ordinary PR builds m
 version; the `--release` check must run against the final tagged wheel without overriding its version.
 
 The **Upgrade release gate** CI job requires successful public migration commands, full Server readiness, target
-startup, preserved records and new writes on real 1.3.0 databases in all twelve declared cases. Limited bundle verification with
+startup, preserved records and new writes on real 1.3.0 databases in all ten required automatic cases. The two
+manual seekDB Code cases do not block publication or establish supported upgrades. Limited bundle verification with
 `server_ready=false` fails. Every backend runs even if another backend fails, with separate logs and results.
 seekDB runs embedded in a temporary runner directory. PR and publication jobs start a disposable OceanBase CE
 container, wait for its MySQL tenant, archive diagnostics, and remove it even on failure. No external database
