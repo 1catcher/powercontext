@@ -80,10 +80,11 @@ jobs:
           VERSION: ${{ github.event.release.tag_name }}
         run: make release-check
 
-      - name: Verify upgrade policy and gate regressions
-        run: |
-          make upgrade-policy-check
-          uv run pytest -q tests/test_upgrade_release_gate.py tests/test_upgrade_publication.py
+      - name: Run upgrade gate regressions
+        run: uv run pytest -q tests/test_upgrade_release_gate.py tests/test_upgrade_publication.py tests/test_upgrade_schema_equivalence.py
+
+      - name: Verify upgrade policy
+        run: make upgrade-policy-check
 
       - name: Build release distributions
         run: |

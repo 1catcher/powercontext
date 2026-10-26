@@ -1205,3 +1205,69 @@ def test_serial_publication_gate_also_waives_only_seekdb_code(release):
     assert result["complete"] is False
     assert all(gate.manual_upgrade_case(case) for case in result["deferred_cases"])
     assert all(not gate.manual_upgrade_case(item["case"]) for item in result["cases"])
+
+
+@pytest.mark.parametrize("configuration", ["typo"])
+def test_unknown_configuration_fails_before_opening_database(tmp_path, configuration):
+    work = tmp_path / "must-not-be-created"
+    suite = gate.ROOT / "tests/release_upgrades/test_full_server.py"
+    environment = dict(os.environ)
+    environment.update(
+        PYTEST_DISABLE_PLUGIN_AUTOLOAD="1",
+        PC_UPGRADE_CONFIGURATION=configuration,
+        PC_UPGRADE_SOURCE_VERSION="1.3.0",
+        PC_UPGRADE_SOURCE_PYTHON=str(tmp_path / "nonexistent-source"),
+        PC_UPGRADE_TARGET_PYTHON=str(tmp_path / "nonexistent-target"),
+        PC_UPGRADE_BACKEND="sqlite",
+        PC_UPGRADE_WORK=str(work),
+        PC_UPGRADE_REPORT_DIR=str(tmp_path / "report"),
+    )
+    environment.pop("PYTEST_ADDOPTS", None)
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            "-c",
+            os.devnull,
+            "--confcutdir",
+            str(suite.parent),
+            "-p",
+            "no:cacheprovider",
+            "-k",
+            "test_source_release_database",
+            "-q",
+            str(suite),
+        ],
+        cwd=tmp_path,
+        env=environment,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    assert result.returncode != 0
+    assert "Unregistered acceptance configuration" in result.stdout
+    assert not work.exists()
+
+
+@pytest.mark.skipif(sys.platform == "linux", reason="Linux supports the required process ownership")
+def test_full_acceptance_rejects_unsupported_host_before_installing(tmp_path):
+    with pytest.raises(gate.GateError, match="requires Linux"):
+        gate.run_case(tmp_path, tmp_path / "wheel", {}, tmp_path / "report")
+    assert not (tmp_path / "report").exists()
+
+
+@pytest.mark.parametrize("configuration", [None, "different-profile"])
+def test_parallel_collection_rejects_unproven_configuration(parallel_reports, configuration):
+    root, prepared, reports, _ = parallel_reports
+    path = reports / "case-0/acceptance/backend.json"
+    backend = json.loads(path.read_text())
+    if configuration is None:
+        del backend["configuration"]
+    else:
+        backend["configuration"] = configuration
+    parallel.write_json(path, backend)
+    with pytest.raises(gate.GateError, match="Configuration evidence"):
+        parallel.collect(root, prepared, reports, root / "accepted")
+    assert not (root / "accepted/validated-dist").exists()

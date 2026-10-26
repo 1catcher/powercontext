@@ -163,7 +163,9 @@ async def inspect(backend: str, database: Path, *, add_revision: bool, canonical
             trigger_rows = [
                 dict(zip((column[0] for column in cursor.description), row, strict=True)) for row in cursor.fetchall()
             ]
-            triggers = {row["Trigger"]: [row["Event"], row["Table"], row["Statement"]] for row in trigger_rows}
+            triggers = {
+                row["Trigger"]: [row["Timing"], row["Event"], row["Table"], row["Statement"]] for row in trigger_rows
+            }
         logical = None
         if canonical:
             from powercontext.builtin.persistence.migrations.mysql_schema import _parse_table

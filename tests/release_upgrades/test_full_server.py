@@ -370,6 +370,17 @@ def task_state(case, role, operation, scope):
     return json.loads(path.read_text())
 
 
+def verify_authorization(case, role, historical):
+    fixture = case["report"] / "authorization-fixture.json"
+    fixture.write_text(json.dumps(historical), encoding="utf-8")
+    command(
+        [str(case[role]), "-I", str(ROOT / "tests/release_upgrades/authorization_fixture.py"), str(fixture)],
+        environment_for(case),
+        case["work"],
+        case["report"] / f"{role}-authorization.log",
+    )
+
+
 def seed(client, *, candidate_prefix):
     scopes = [
         post(
@@ -423,9 +434,8 @@ def seed(client, *, candidate_prefix):
         {"scope_id": scope, "candidate_id": published["candidate_id"], "expected_version": published["version"]},
     )
     artifact = post(client, "/v1/experience/get", {"scope_id": scope, "artifact": published["result_artifact"]})
-    principal = client.get("/v1/access/me").json()["principal"]
     grant = {
-        "subject": principal,
+        "subject": {"type": "user", "id": "upgrade-viewer"},
         "resource": {"type": "scope", "scope_id": scope},
         "role": "scope.viewer",
         "idempotency_key": "upgrade-viewer",
@@ -440,6 +450,7 @@ def seed(client, *, candidate_prefix):
     assert {digest(item) for item in readback} >= {digest(item) for item in memory}
     return {
         "scope": scope,
+        "ungranted_scope": scopes[1]["scope_id"],
         "memory": memory,
         "candidate": candidate,
         "first_candidate": first,
@@ -547,6 +558,7 @@ def historical(case):
                 },
             )
             assert_vector_reads(client, value)
+    verify_authorization(case, "source", value)
     if case["code_enabled"]:
         value["code"] = historical_code(case, value["scope"])
     value["task"] = task_state(case, "source", "seed", value["scope"])
@@ -960,12 +972,17 @@ def test_read_write_and_retrieval(case, target, historical):
         assert_vector_reads(target, historical, new_text=text)
 
 
-def test_authorization(target, historical):
-    assert target.get("/v1/scopes", headers={"Authorization": "Bearer invalid-fixture-token"}).status_code == 401
-    # The stable idempotency key must resolve to the SAME persisted grant.
-    assert post(target, "/v1/access/bindings/create", historical["grant"]) == historical["binding"]
-    response = target.get(f"/v1/scopes/{historical['scope']}")
-    assert response.status_code == 200
+def test_authorization(case, migrated):
+    historical = migrated["historical"]
+    with server(
+        case["target"], environment_for(case), case["work"], case["report"] / "authorization-server.log"
+    ) as client:
+        assert client.get("/v1/scopes", headers={"Authorization": "Bearer invalid-fixture-token"}).status_code == 401
+        # The stable idempotency key must resolve to the SAME persisted grant.
+        assert post(client, "/v1/access/bindings/create", historical["grant"]) == historical["binding"]
+    # Stop the CLI before opening the same database with the installed SDK,
+    # especially for the embedded engine's exclusive process ownership.
+    verify_authorization(case, "target", historical)
 
 
 def test_candidates_and_processing(case, migrated):
@@ -1025,6 +1042,17 @@ def test_preserved_history_and_cursors(target, historical):
             assert stored[key] == version[key]
 
 
+# Quoted tokens and comments are opaque: whitespace, quote characters and
+# AUTO_INCREMENT text inside them are schema content, not formatting.
+DDL_TOKENS = re.compile(
+    r"""'(?:''|\\.|[^'\\])*' | "(?:""|\\.|[^"\\])*" | `(?:``|\\.|[^`\\])*`
+    | \[(?:\]\]|[^\]])*\] | /\*.*?\*/ | --[^\r\n]*
+    | [A-Za-z_\u0080-\U0010ffff][A-Za-z_0-9$\u0080-\U0010ffff]* | [0-9]+ | ->> | -> | <= | >= | <> | != | \|\| | << | >> | [^\s]
+    """,
+    re.VERBOSE | re.DOTALL,
+)
+
+
 def canonical_schema(snapshot):
     if snapshot.get("logical_tables") is not None:
         return {
@@ -1034,9 +1062,35 @@ def canonical_schema(snapshot):
         }
 
     def normalize(sql):
-        sql = re.sub(r"\bAUTO_INCREMENT=\d+", "", sql)
-        sql = re.sub(r'["`]([A-Za-z_][A-Za-z_0-9]*)["`]', r"\1", sql)
-        return " ".join(sql.split())
+        tokens = DDL_TOKENS.findall(sql)
+        table = [lexeme.upper() for lexeme in tokens[:2]] == ["CREATE", "TABLE"]
+        depth = 0
+        closed_definition = False
+        normalized = []
+        index = 0
+        while index < len(tokens):
+            lexeme = tokens[index]
+            # Only ignore the table-level next-id counter after the definition.
+            # Column AUTO_INCREMENT attributes and all quoted contents remain.
+            if (
+                table
+                and closed_definition
+                and depth == 0
+                and lexeme.upper() == "AUTO_INCREMENT"
+                and tokens[index + 1 : index + 2] == ["="]
+                and index + 2 < len(tokens)
+                and tokens[index + 2].isdigit()
+            ):
+                index += 3
+                continue
+            if lexeme == "(":
+                depth += 1
+            elif lexeme == ")":
+                depth -= 1
+                closed_definition = depth == 0
+            normalized.append(lexeme)
+            index += 1
+        return tuple(normalized)
 
     return {
         kind: {name: normalize(sql or "") for name, sql in snapshot.get(kind, {}).items()}

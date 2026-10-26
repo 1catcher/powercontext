@@ -390,6 +390,7 @@ def case_workspace(backend: str, output: Path) -> Iterator[Path]:
 
 
 def run_case(root: Path, wheel: Path, case: dict[str, Any], output: Path) -> dict[str, Any]:
+    require(sys.platform == "linux", "Installed-release acceptance requires Linux process ownership and cleanup")
     output.mkdir(parents=True, exist_ok=False)
     # Never inherit a developer's live deployment or pytest selection overrides.
     environment = {
