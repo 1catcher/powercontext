@@ -16,6 +16,8 @@
 
 from __future__ import annotations
 
+import re
+
 import json
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
@@ -56,6 +58,8 @@ class _PreparedContextEntry:
     citation: dict[str, object]
     content: str
     truncated: bool
+    start: int | None = None
+    end: int | None = None
 
 
 @dataclass(frozen=True)
@@ -106,6 +110,7 @@ class PreparedContextBuild:
     origins: tuple[PreparedContextOrigin, ...]
     omissions: PreparedContextOmissions = PreparedContextOmissions()
     code_origins: tuple[CodeEvidenceRef, ...] = ()
+    fragments: tuple[PreparedContextFragment, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -115,6 +120,20 @@ class MemoryEntryAddress:
     memory: ArtifactAddress
     entry_id: str
     entry_version_id: str
+
+
+@dataclass(frozen=True, slots=True)
+class PreparedContextFragment:
+    """One literal evidence span taken from a Memory entry body.
+
+    The span is always ``entry.text[start:end]``: the selection never rewrites,
+    translates, or summarises the source body.
+    """
+
+    address: MemoryEntryAddress
+    start: int
+    end: int
+    text: str
 
 
 PreparedContextOrigin = MemoryCitation | ArtifactRef | MemoryEntryAddress | ArtifactAddress
@@ -235,7 +254,7 @@ class PreparedContextBuilder:
         if sum(len(candidates.hits) for candidates in experience_candidates) > self.experience_candidate_limit:
             raise PreparedContextInvariantError("experience-candidate-limit")
 
-        content, origins, omissions = self._select_entries(
+        content, origins, omissions, fragments = self._select_entries(
             request=request,
             current_scope_id=current_scope_id,
             memory_candidates=memory_candidates,
@@ -254,6 +273,7 @@ class PreparedContextBuilder:
             context=PreparedContext(status="ready", content=content, content_bytes=content_bytes),
             origins=origins,
             omissions=omissions,
+            fragments=fragments,
         )
 
     def probe_budget(
@@ -277,7 +297,7 @@ class PreparedContextBuilder:
         counters because both go through :meth:`_select_entries`.
         """
 
-        content, origins, omissions = self._select_entries(
+        content, origins, omissions, _fragments = self._select_entries(
             request=request,
             current_scope_id=current_scope_id,
             memory_candidates=memory_candidates,
@@ -313,13 +333,21 @@ class PreparedContextBuilder:
         """
 
         if request.assembly is not None:
-            return self._select_text(
+            content, origins, omissions = self._select_text(
                 request,
                 current_scope_id=current_scope_id,
                 memory_candidates=memory_candidates,
                 experience_candidates=experience_candidates,
                 profile_candidates=profile_candidates,
                 topic_memory_hits=topic_memory_hits,
+            )
+            return content, origins, omissions, ()
+
+        if request.evidence_selection:
+            return self._select_evidence(
+                request,
+                current_scope_id=current_scope_id,
+                memory_candidates=memory_candidates,
             )
 
         memory_entries = _interleave_groups(
@@ -344,8 +372,102 @@ class PreparedContextBuilder:
         )[: self.experience_entry_limit]
         entries, omissions = self._fit_entries(request, memory_entries, topic_memory_entries, experience_entries)
         if not entries:
-            return None, (), omissions
-        return _render(entries), tuple(entry.origin for entry in entries), omissions
+            return None, (), omissions, ()
+        return _render(entries), tuple(entry.origin for entry in entries), omissions, ()
+
+    def _select_evidence(
+        self,
+        request: PrepareContextRequest,
+        *,
+        current_scope_id: str | None,
+        memory_candidates: Sequence[PreparedMemoryCandidates],
+    ) -> tuple[
+        str | None,
+        tuple[PreparedContextOrigin, ...],
+        PreparedContextOmissions,
+        tuple[PreparedContextFragment, ...],
+    ]:
+        """Select the literal evidence spans of the recalled Memory bodies.
+
+        Every span is a verbatim slice of one candidate body, so the citation
+        and the character range point back at the exact entry version. The
+        query decides which spans are worth the byte budget: a span that
+        shares rare query terms is delivered before one that does not.
+        """
+
+        terms = _query_terms(request.query)
+        weights = _term_weights(terms, memory_candidates)
+        by_hit: dict[int, list[tuple[float, int, int, int, int, MemoryHit, str]]] = {}
+        order = 0
+        for group in memory_candidates:
+            scope_id = group.scope_id or current_scope_id or ""
+            for hit in group.hits:
+                if hit.memory_ref != group.memory_ref:
+                    raise PreparedContextInvariantError("memory-ref-mismatch")
+                for start, end in _evidence_segments(hit.text):
+                    score = _segment_score(hit.text[start:end].lower(), terms, weights)
+                    by_hit.setdefault(id(hit), []).append(
+                        (score, len(hit.text[start:end]), order, start, end, hit, scope_id)
+                    )
+                    order += 1
+        for group in by_hit.values():
+            group.sort(key=lambda item: (-item[0], item[1], item[2]))
+        # Every candidate body offers its best span before any body offers a
+        # second one, so one long document cannot spend the whole budget.
+        groups = sorted(by_hit.values(), key=lambda group: (-group[0][0], group[0][2]))
+
+        selected: list[tuple[int, int, int, int]] = []
+        entries: list[_PreparedContextEntry] = []
+        fragments: list[PreparedContextFragment] = []
+        origins: list[PreparedContextOrigin] = []
+        depth = 0
+        while True:
+            progressed = False
+            for group in groups:
+                if depth >= len(group):
+                    continue
+                _, _, _, start, end, hit, scope_id = group[depth]
+                if any(
+                    start < chosen_end and chosen_start < end
+                    for chosen_hit, chosen_start, chosen_end in selected
+                    if chosen_hit == id(hit)
+                ):
+                    depth += 1
+                    continue
+                address = MemoryEntryAddress(
+                    memory=ArtifactAddress(scope_id=scope_id, artifact=hit.memory_ref),
+                    entry_id=hit.entry_id,
+                    entry_version_id=hit.entry_version_id,
+                )
+                entry = _PreparedContextEntry(
+                    origin=address,
+                    kind="memory",
+                    citation={
+                        "scope_id": scope_id,
+                        "memory_ref": hit.memory_ref.model_dump(mode="json"),
+                        "entry_id": hit.entry_id,
+                        "entry_version_id": hit.entry_version_id,
+                    },
+                    content=hit.text[start:end],
+                    truncated=False,
+                    start=start,
+                    end=end,
+                )
+                if _rendered_bytes([*entries, entry]) > request.max_bytes:
+                    continue
+                entries.append(entry)
+                selected.append((id(hit), start, end))
+                origins.append(address)
+                fragments.append(
+                    PreparedContextFragment(address=address, start=start, end=end, text=entry.content)
+                )
+                progressed = True
+            if not progressed:
+                break
+            depth += 1
+        if not entries:
+            return None, (), PreparedContextOmissions(), ()
+        return _render(entries), tuple(origins), PreparedContextOmissions(), tuple(fragments)
 
     def _select_text(
         self,
@@ -660,6 +782,59 @@ class PreparedContextBuilder:
         return _EntryFit(entry=best)
 
 
+_EVIDENCE_TERM_PATTERN = re.compile(r"[a-z0-9]+|[一-鿿]+")
+_EVIDENCE_SENTENCE_TERMINATORS = ".!?。！？"
+
+
+def _query_terms(query: str) -> tuple[str, ...]:
+    """Return the distinct lower case terms of one query."""
+
+    return tuple(dict.fromkeys(_EVIDENCE_TERM_PATTERN.findall(query.lower())))
+
+
+def _term_weights(
+    terms: tuple[str, ...],
+    memory_candidates: Sequence[PreparedMemoryCandidates],
+) -> dict[str, float]:
+    """Weigh every query term by how rare it is among the candidate bodies."""
+
+    bodies = [hit.text.lower() for group in memory_candidates for hit in group.hits]
+    total = max(1, len(bodies))
+    weights: dict[str, float] = {}
+    for term in terms:
+        frequency = sum(1 for body in bodies if term in body)
+        weights[term] = total / (total + frequency)
+    return weights
+
+
+def _evidence_segments(text: str) -> tuple[tuple[int, int], ...]:
+    """Split one body into literal sentence spans with their character offsets."""
+
+    segments: list[tuple[int, int]] = []
+    position = 0
+    length = len(text)
+    while position < length:
+        index = position
+        while index < length and text[index] not in _EVIDENCE_SENTENCE_TERMINATORS:
+            index += 1
+        if index < length:
+            index += 1
+        if text[position:index].strip():
+            segments.append((position, index))
+        position = index
+    return tuple(segments)
+
+
+def _segment_score(segment: str, terms: tuple[str, ...], weights: dict[str, float]) -> float:
+    """Score one span by the query terms it carries."""
+
+    score = 0.0
+    for term in terms:
+        if term in segment:
+            score += weights.get(term, 0.0)
+    return score
+
+
 def _interleave(
     memory: Sequence[_PreparedContextEntry],
     topics: Sequence[_PreparedContextEntry],
@@ -715,6 +890,9 @@ def _render_entry(entry: _PreparedContextEntry) -> dict[str, object]:
         "content": entry.content,
         "truncated": entry.truncated,
     }
+    if entry.start is not None and entry.end is not None:
+        rendered["start"] = entry.start
+        rendered["end"] = entry.end
     if entry.kind != "memory":
         rendered["kind"] = entry.kind
     return rendered
