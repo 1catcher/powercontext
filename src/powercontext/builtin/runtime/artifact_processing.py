@@ -49,7 +49,11 @@ else:
 from powercontext._logging import log_safely
 from powercontext.builtin.persistence.database import AsyncDatabase
 from powercontext.builtin.persistence.errors import ArtifactProcessingLeadershipLostError
-from powercontext.builtin.persistence.processing_intents import ArtifactProcessingIntentRepository
+from powercontext.builtin.persistence.processing_intents import (
+    ArtifactProcessingIntentRepository,
+    StoredArtifactProcessingIntent,
+)
+from powercontext.builtin.persistence.cursors import SourceCursorRepository
 from powercontext.builtin.persistence.supervision import (
     ArtifactProcessingBindingStateRepository,
     ArtifactProcessingFence,
@@ -57,7 +61,11 @@ from powercontext.builtin.persistence.supervision import (
     ArtifactProcessingLeaseRepository,
     database_utc_now,
 )
-from powercontext.builtin.persistence.tables import ARTIFACT_PROCESSING_INTENTS_TABLE, ARTIFACT_PROCESSING_LEASES_TABLE
+from powercontext.builtin.persistence.tables import (
+    ARTIFACT_PROCESSING_INTENTS_TABLE,
+    ARTIFACT_PROCESSING_LEASES_TABLE,
+    SOURCES_TABLE,
+)
 from powercontext.builtin.runtime.processing_contracts import (
     ArtifactProcessingWorkAssignment,
     ArtifactProcessingWorkerCompletion,
@@ -110,6 +118,7 @@ class ArtifactProcessingBinding:
     max_workers: int = 1
     worker_timeout_seconds: float = 600.0
     automatic_processing_interval: timedelta | None = None
+    automatic_source_count_threshold: int | None = None
     cron: str | None = None
     timezone: str = "Asia/Shanghai"
     config_prefix: str | None = None
@@ -136,6 +145,9 @@ class ArtifactProcessingBinding:
                 raise ValueError("automatic interval must be positive")  # noqa: TRY003
             if self.cron is not None:
                 raise ValueError("interval and cron cannot both be enabled")  # noqa: TRY003
+        if self.automatic_source_count_threshold is not None:
+            if type(self.automatic_source_count_threshold) is not int or self.automatic_source_count_threshold < 1:
+                raise ValueError("automatic source count threshold must be a positive integer")  # noqa: TRY003
         if self.cron is not None:
             CronTrigger.from_crontab(self.cron, timezone=ZoneInfo(self.timezone))
 
@@ -392,6 +404,7 @@ class _FamilyState:
     running: dict[str, _RunningWorker] = field(default_factory=dict)
     retries: dict[str, _RetryState] = field(default_factory=dict)
     requested_after: int = 0
+    count_after: int = 0
     scan_after: int = 0
     scan_generation: int = 0
     scan_in_progress: bool = False
@@ -446,6 +459,7 @@ class ArtifactProcessingSupervisor:
         self._lease_mode = lease_mode
         self._supervisor_group = supervisor_group
         self._intents = intents or ArtifactProcessingIntentRepository()
+        self._cursors = SourceCursorRepository()
         self._leases = leases or ArtifactProcessingLeaseRepository()
         self._binding_states = binding_states or ArtifactProcessingBindingStateRepository()
         self.holder_id = holder_id or str(uuid4())
@@ -650,12 +664,67 @@ class ArtifactProcessingSupervisor:
             state.reconcile_complete = True
         # Alternate discovery channels so explicit traffic cannot monopolize admission.
         state.automatic_next = not state.automatic_next
+        await self._discover_by_count(state)
         if state.automatic_next:
             await self._discover_automatic(state)
             await self._discover_requested(state)
         else:
             await self._discover_requested(state)
             await self._discover_automatic(state)
+
+    async def _discover_by_count(self, state: _FamilyState) -> None:
+        """Request processing for scopes whose pending Source count reached the threshold.
+
+        The pending count is the number of Source journal entries written after
+        the Family's own successful cursor, so every Scope and every Family
+        counts only its own unprocessed input. A repeated capture keeps its
+        journal identity and therefore does not raise the count.
+        """
+
+        threshold = state.binding.automatic_source_count_threshold
+        if threshold is None:
+            return
+        capacity = self._fresh_capacity(state)
+        if capacity <= 0:
+            return
+        binding = state.binding
+        rows: tuple[StoredArtifactProcessingIntent, ...] = ()
+        requested = False
+        async with self._database.transaction() as connection:
+            await self._leases.require_fence(connection, self._require_current_fence())
+            rows = await self._intents.scan(
+                connection,
+                binding.binding_name,
+                after_sequence=state.count_after,
+                limit=min(capacity, _DISCOVERY_PAGE_SIZE),
+                dirty_only=True,
+            )
+            for row in rows:
+                state.count_after = row.pending_sequence
+                if row.scope_id in state.running or row.scope_id in state.queued:
+                    continue
+                pending = await self._pending_source_count(connection, row.scope_id, binding.binding_name)
+                if pending < threshold:
+                    continue
+                await self._intents.request(connection, row.scope_id, binding.binding_name)
+                requested = True
+        if len(rows) < min(capacity, _DISCOVERY_PAGE_SIZE):
+            state.count_after = 0
+        if requested:
+            # The requested channel admits the scope in this discovery pass.
+            state.discovery_pending = True
+
+    async def _pending_source_count(self, connection: AsyncConnection, scope_id: str, binding_name: str) -> int:
+        """Count the Source journal entries this Family has not processed yet."""
+
+        cursor = await self._cursors.load(connection, scope_id, binding_name)
+        cursor_sequence = 0 if cursor is None else int(cursor.cursor.sequence)
+        high = await connection.scalar(
+            select(func.coalesce(func.max(SOURCES_TABLE.c.journal_position), 0)).where(
+                SOURCES_TABLE.c.scope_id == scope_id
+            )
+        )
+        return max(0, int(high or 0) - cursor_sequence)
 
     async def _discover_requested(self, state: _FamilyState) -> None:
         capacity = self._fresh_capacity(state)
@@ -1093,6 +1162,10 @@ class ArtifactProcessingSupervisor:
                 continue
             if state.next_schedule_at is not None:
                 deadlines.append(state.next_schedule_at)
+            if state.binding.automatic_source_count_threshold is not None:
+                # A count trigger has no schedule of its own, so the Supervisor
+                # keeps looking for pending input on every tick.
+                deadlines.append(now + self._tick)
             if state.discovery_pending or state.scan_in_progress or not state.reconcile_complete or state.degraded:
                 deadlines.append(max(now, state.next_discovery_at))
         return None if not deadlines else max(0.001, min(deadlines) - now)

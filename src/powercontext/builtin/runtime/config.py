@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Mapping
-from typing import Any, Literal, Self
+from typing import Annotated, Any, Literal, Self
 
 from pydantic import (
     AnyHttpUrl,
@@ -28,6 +28,7 @@ from pydantic import (
     JsonValue,
     PrivateAttr,
     SecretStr,
+    Strict,
     field_validator,
     model_validator,
 )
@@ -202,6 +203,10 @@ class RuntimeConfig(BaseModel):
     schedule_seconds: float | None = Field(default=None, gt=0)
     memory_schedule_seconds: float | None = Field(default=None, gt=0)
     experience_schedule_seconds: float | None = Field(default=None, gt=0)
+    # Start a Family as soon as this many new Source journal entries are
+    # waiting for it. ``None`` keeps the time based schedule only.
+    memory_source_count_threshold: Annotated[int, Strict(), Field(gt=0)] | None = None
+    topic_memory_source_count_threshold: Annotated[int, Strict(), Field(gt=0)] | None = None
     dream_enabled: bool = True
     dream_max_pending_per_scope: int = Field(default=32, ge=1, le=1000)
     generation_concurrency: int = Field(default=4, ge=1, le=64)
