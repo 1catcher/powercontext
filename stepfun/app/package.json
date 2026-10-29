@@ -1,0 +1,17 @@
+{
+  "name": "stepfun-ondevice-knowledge-base",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Browser-side embedding knowledge base with seekdb hybrid retrieval",
+  "scripts": {
+    "start": "node server.mjs",
+    "bench": "node ../scripts/bench.mjs"
+  },
+  "dependencies": {
+    "seekdb": "1.4.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

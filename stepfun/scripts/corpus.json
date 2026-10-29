@@ -1,0 +1,78 @@
+{
+  "documents": [
+    {
+      "id": "emissions-scope",
+      "title": "2023 Emissions Report",
+      "text": "Scope 1 and Scope 2 greenhouse gas emissions cover direct emissions from owned and operated facilities and indirect emissions from purchased energy. The company reduced Scope 1 emissions by 18 percent against the 2019 baseline."
+    },
+    {
+      "id": "renewable-energy",
+      "title": "Renewable Energy Procurement",
+      "text": "The company signed long term power purchase agreements for 240 megawatts of renewable electricity, covering the electricity consumption of six manufacturing sites in three countries."
+    },
+    {
+      "id": "water-stewardship",
+      "title": "Water Stewardship Programme",
+      "text": "A water stewardship programme targets the basins where the largest withdrawals occur, with recycling raised to 41 percent of total water use at the desert assembly plants."
+    },
+    {
+      "id": "supply-chain-code",
+      "title": "Supplier Code of Conduct",
+      "text": "The supplier code of conduct requires every supplier to respect human rights, avoid forced labour and report safety incidents within 24 hours of occurrence."
+    },
+    {
+      "id": "safety-record",
+      "title": "Workplace Safety",
+      "text": "The total recordable incident rate fell to 0.34 per 200,000 hours worked. Safety training completion reached 99 percent of all employees and contractors."
+    },
+    {
+      "id": "product-quality",
+      "title": "Product Quality Assurance",
+      "text": "Quality assurance covers incoming inspection, in process testing and final audit. A batch traceability system lets a recall be scoped to a single production lot within two hours."
+    },
+    {
+      "id": "logistics-network",
+      "title": "Distribution Network",
+      "text": "The distribution network serves 1,400 distribution centres. Route optimisation and a shift of two thirds of volume to rail reduced tonne kilometres per unit shipped."
+    },
+    {
+      "id": "packaging-recycling",
+      "title": "Packaging and Recycling",
+      "text": "All primary packaging is now recyclable and the company removed 4,100 tonnes of plastic per year by light weighting bottles and replacing shrink film with stretch wrap."
+    },
+    {
+      "id": "employee-training",
+      "title": "Learning and Development",
+      "text": "Every employee receives an annual learning budget and 42 hours of training. A graduate programme placed 380 new hires into engineering and data roles."
+    },
+    {
+      "id": "cyber-security",
+      "title": "Cyber Security Operations",
+      "text": "A security operations centre monitors the network around the clock. Phishing simulation training reduced the click rate from 19 percent to 4 percent."
+    },
+    {
+      "id": "clinical-trials",
+      "title": "Clinical Development",
+      "text": "Phase three trials for the lead candidate met the primary endpoint. The programme enrolled 2,140 participants across 34 sites in 11 countries."
+    },
+    {
+      "id": "patents-portfolio",
+      "title": "Intellectual Property",
+      "text": "The company holds 3,900 granted patents and 1,200 pending applications, covering formulation, delivery devices and manufacturing process control."
+    }
+  ],
+  "queries": [
+    { "text": "How much did greenhouse gas emissions fall?", "relevant": ["emissions-scope"] },
+    { "text": "How is renewable electricity bought?", "relevant": ["renewable-energy"] },
+    { "text": "What is the water recycling rate?", "relevant": ["water-stewardship"] },
+    { "text": "What must suppliers do about forced labour?", "relevant": ["supply-chain-code"] },
+    { "text": "What is the recordable incident rate?", "relevant": ["safety-record"] },
+    { "text": "How quickly can a product recall be scoped?", "relevant": ["product-quality"] },
+    { "text": "How did the company cut transport emissions?", "relevant": ["logistics-network"] },
+    { "text": "What packaging changes reduced plastic?", "relevant": ["packaging-recycling"] },
+    { "text": "How much training does each employee get?", "relevant": ["employee-training"] },
+    { "text": "How is phishing click rate reduced?", "relevant": ["cyber-security"] },
+    { "text": "How many participants were in the phase three trial?", "relevant": ["clinical-trials"] },
+    { "text": "How many granted patents does the company hold?", "relevant": ["patents-portfolio"] }
+  ]
+}

@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>端侧知识库 · 浏览器向量化 + seekdb 混合检索</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <header>
+      <h1>端侧知识库</h1>
+      <p class="lede">
+        文档在浏览器里用开源 embedding 模型向量化，向量与原文写入 seekdb；
+        查询也在浏览器里向量化，混合检索由 seekdb 一条查询完成。
+      </p>
+      <p id="backend" class="badge">推理后端：未加载</p>
+    </header>
+
+    <main>
+      <section>
+        <h2>1 · 导入文档</h2>
+        <p class="hint">
+          每行一篇文档，格式 <code>标题 | 正文</code>；也可以直接粘贴多段文本。
+          向量化全部在本机浏览器完成，模型文件首次使用后由浏览器缓存。
+        </p>
+        <textarea id="documents" rows="8" spellcheck="false"></textarea>
+        <div class="row">
+          <label>模型
+            <select id="model">
+              <option value="Xenova/all-MiniLM-L6-v2">all-MiniLM-L6-v2（384 维，int8）</option>
+              <option value="Xenova/bge-small-en-v1.5">bge-small-en-v1.5（384 维，int8）</option>
+            </select>
+          </label>
+          <label>精度
+            <select id="dtype">
+              <option value="q8">int8（量化）</option>
+              <option value="fp32">fp32（对照）</option>
+              <option value="fp16">fp16（对照）</option>
+            </select>
+          </label>
+          <button id="load">加载模型</button>
+          <button id="import" disabled>向量化并写入 seekdb</button>
+        </div>
+        <p id="import-status" class="status"></p>
+      </section>
+
+      <section>
+        <h2>2 · 检索</h2>
+        <div class="row">
+          <input id="query" type="text" placeholder="输入问题，例如：How does the company reduce its emissions?" />
+          <button id="search" disabled>混合检索</button>
+        </div>
+        <p id="search-status" class="status"></p>
+        <ol id="results" class="results"></ol>
+      </section>
+    </main>
+
+    <footer>
+      <p>
+        检索在 seekdb 内完成：全文分支与向量分支由 seekdb 的 RRF 融合，本服务不自行拼合两路结果。
+      </p>
+    </footer>
+
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>

@@ -1,0 +1,154 @@
+:root {
+  color-scheme: light dark;
+  --ink: #1b1f24;
+  --muted: #5b6470;
+  --line: #d8dee6;
+  --accent: #1f6feb;
+  --surface: #ffffff;
+  --page: #f6f8fa;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --ink: #e6edf3;
+    --muted: #9aa7b4;
+    --line: #30363d;
+    --accent: #6ea8ff;
+    --surface: #161b22;
+    --page: #0d1117;
+  }
+}
+
+body {
+  margin: 0;
+  padding: 2rem 1.25rem 3rem;
+  font: 16px/1.6 -apple-system, "Segoe UI", "Noto Sans SC", system-ui, sans-serif;
+  color: var(--ink);
+  background: var(--page);
+}
+
+header,
+main,
+footer {
+  max-width: 54rem;
+  margin: 0 auto;
+}
+
+h1 {
+  margin: 0 0 0.25rem;
+  font-size: 1.6rem;
+}
+
+h2 {
+  margin: 0 0 0.5rem;
+  font-size: 1.05rem;
+}
+
+.lede,
+.hint,
+.status {
+  color: var(--muted);
+  margin: 0.25rem 0 0.75rem;
+}
+
+.badge {
+  display: inline-block;
+  margin: 0.5rem 0 1rem;
+  padding: 0.25rem 0.6rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+  font-size: 0.85rem;
+}
+
+section {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 1rem 1.1rem 1.2rem;
+  margin-bottom: 1.25rem;
+}
+
+textarea,
+input[type="text"],
+select {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 0.5rem 0.6rem;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--page);
+  color: inherit;
+  font: inherit;
+}
+
+textarea {
+  resize: vertical;
+  font-family: ui-monospace, "SFMono-Regular", monospace;
+  font-size: 0.9rem;
+}
+
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  align-items: end;
+  margin-top: 0.6rem;
+}
+
+.row label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.row select,
+.row input {
+  min-width: 12rem;
+}
+
+button {
+  padding: 0.5rem 0.9rem;
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  background: var(--accent);
+  color: #fff;
+  font: inherit;
+  cursor: pointer;
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.results {
+  margin: 0.5rem 0 0;
+  padding-left: 1.2rem;
+}
+
+.results li {
+  margin-bottom: 0.9rem;
+}
+
+.results p {
+  margin: 0.2rem 0;
+  color: var(--muted);
+  font-size: 0.92rem;
+}
+
+.results small {
+  color: var(--muted);
+}
+
+code {
+  font-family: ui-monospace, "SFMono-Regular", monospace;
+  font-size: 0.9em;
+}
+
+footer {
+  color: var(--muted);
+  font-size: 0.88rem;
+}
