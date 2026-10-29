@@ -100,6 +100,22 @@ class MemoryIndex(Protocol):
         /,
     ) -> MemorySearchChannels: ...
 
+    async def hybrid_search(
+        self,
+        connection: AsyncConnection,
+        scope_id: str,
+        request: MemorySearchRequest,
+        /,
+    ) -> MemorySearchChannels | None:
+        """Return both candidate channels from one native statement.
+
+        ``None`` means the backend cannot serve the request that way, and the
+        caller falls back to the one-statement-per-channel path.
+        """
+
+        del connection, scope_id, request
+        return None
+
     async def vector_complete(
         self,
         connection: AsyncConnection,
@@ -165,6 +181,18 @@ class NoMemoryIndex:
         /,
     ) -> MemorySearchChannels:
         raise CapabilityNotSupportedError("fts")
+
+    async def hybrid_search(
+        self,
+        connection: AsyncConnection,
+        scope_id: str,
+        request: MemorySearchRequest,
+        /,
+    ) -> MemorySearchChannels | None:
+        """This backend reads each candidate channel with its own statement."""
+
+        del connection, scope_id, request
+        return None
 
     async def vector_complete(
         self,
@@ -247,6 +275,12 @@ class CompositeMemoryIndex:
         request: MemorySearchRequest,
         /,
     ) -> MemorySearchChannels:
+        if request.mode == "hybrid" and any(index.capabilities.vector for index in self.indexes):
+            # A backend that can read both candidate channels from one statement
+            # does so, so the hybrid round trip costs one query instead of two.
+            channels = await self._native_hybrid_search(connection, scope_id, request)
+            if channels is not None:
+                return channels
         fts: tuple[MemoryChannelHit, ...] = ()
         vector: tuple[MemoryChannelHit, ...] = ()
         for index in self.indexes:
@@ -254,6 +288,19 @@ class CompositeMemoryIndex:
             fts += channels.fts
             vector += channels.vector
         return MemorySearchChannels(fts=fts, vector=vector)
+
+    async def _native_hybrid_search(
+        self,
+        connection: AsyncConnection,
+        scope_id: str,
+        request: MemorySearchRequest,
+        /,
+    ) -> MemorySearchChannels | None:
+        for index in self.indexes:
+            if not index.capabilities.fts:
+                continue
+            return await index.hybrid_search(connection, scope_id, request)
+        return None
 
     async def vector_complete(
         self,
