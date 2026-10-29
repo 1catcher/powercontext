@@ -143,6 +143,7 @@ from powercontext.builtin.persistence.artifact_governance import (
     ArtifactGovernance,
     ArtifactLifecycleState,
 )
+from powercontext.builtin.persistence.database import AsyncDatabase
 from powercontext.builtin.persistence.skill_publications import SkillPublication
 from powercontext.builtin.publication import ArtifactPublicationApplication
 from powercontext.builtin.records import (
@@ -253,6 +254,7 @@ from powercontext.builtin.runtime.recall_sufficiency import (
     build_recall_candidates,
     recall_effort,
 )
+from powercontext.builtin.runtime.source_lifecycle import SourceLifecycleApplication
 from powercontext.builtin.runtime.statistics import RelationalScopedStatistics, overview_selection
 from powercontext.builtin.scope import ScopeApplication, ScopeDescriptor, ScopeSelection
 from powercontext.builtin.scope.subject_sources import SubjectSourceService
@@ -2710,7 +2712,18 @@ class ScopedTopicMemoryApplication:
                         "unit": "topic-memory",
                     },
                 )
-        return result
+        return await self._without_withdrawn_topics(result)
+
+    async def _without_withdrawn_topics(self, result: TopicMemorySearchResult) -> TopicMemorySearchResult:
+        """Keep Topic Memory that lost its support out of native search and Context."""
+
+        withdrawn = await self._runtime.lifecycle.for_scope(self.scope_id).unavailable_topic_ids()
+        if not withdrawn:
+            return result
+        hits = tuple(hit for hit in result.hits if hit.artifact_ref.artifact_id not in withdrawn)
+        if len(hits) == len(result.hits):
+            return result
+        return result.model_copy(update={"hits": hits})
 
     async def _search_with_embedding(
         self,
@@ -3041,6 +3054,7 @@ class BuiltinRuntime:
         statistics_service: StatisticsServiceFactory | None = None,
         record_service: RecordService | None = None,
         prompt_service: PromptService | None = None,
+        lifecycle_database: AsyncDatabase | None = None,
         recall_token_estimator: RecallTokenEstimator | None = None,
         recall_effort_sink: RecallEffortSink | None = None,
         decision_model: DecisionModel | None = None,
@@ -3138,6 +3152,7 @@ class BuiltinRuntime:
         self.memory = MemoryApplication(self)
         self.topic_memory = TopicMemoryApplication(self)
         self.records = RecordApplication(self)
+        self.lifecycle = SourceLifecycleApplication(self, lifecycle_database)
         self.prompts = PromptApplication(self)
         self.review = ReviewApplication(self)
         self.skill = SkillApplication(self)
