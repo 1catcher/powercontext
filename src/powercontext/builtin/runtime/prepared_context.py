@@ -19,6 +19,7 @@ from __future__ import annotations
 import re
 
 import json
+import math
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from itertools import chain
@@ -406,8 +407,11 @@ class PreparedContextBuilder:
                     raise PreparedContextInvariantError("memory-ref-mismatch")
                 for start, end in _evidence_segments(hit.text):
                     score = _segment_score(hit.text[start:end].lower(), terms, weights)
+                    carried = frozenset(
+                        term for term in _stemmed_terms(hit.text[start:end]) if term in weights
+                    )
                     by_hit.setdefault(id(hit), []).append(
-                        (score, len(hit.text[start:end]), order, start, end, hit, scope_id)
+                        (score, len(hit.text[start:end]), order, start, end, hit, scope_id, carried)
                     )
                     order += 1
         for group in by_hit.values():
@@ -415,56 +419,65 @@ class PreparedContextBuilder:
         # Every candidate body offers its best span before any body offers a
         # second one, so one long document cannot spend the whole budget.
         groups = sorted(by_hit.values(), key=lambda group: (-group[0][0], group[0][2]))
-
-        selected: list[tuple[int, int, int, int]] = []
-        entries: list[_PreparedContextEntry] = []
-        fragments: list[PreparedContextFragment] = []
-        origins: list[PreparedContextOrigin] = []
+        # Every candidate body offers its best span before any body offers a
+        # second one, so one long document cannot spend the whole budget.
+        ordered: list[tuple[float, int, int, int, int, object, str]] = []
         depth = 0
         while True:
             progressed = False
             for group in groups:
                 if depth >= len(group):
                     continue
-                _, _, _, start, end, hit, scope_id = group[depth]
-                if any(
-                    start < chosen_end and chosen_start < end
-                    for chosen_hit, chosen_start, chosen_end in selected
-                    if chosen_hit == id(hit)
-                ):
-                    depth += 1
-                    continue
-                address = MemoryEntryAddress(
-                    memory=ArtifactAddress(scope_id=scope_id, artifact=hit.memory_ref),
-                    entry_id=hit.entry_id,
-                    entry_version_id=hit.entry_version_id,
-                )
-                entry = _PreparedContextEntry(
-                    origin=address,
-                    kind="memory",
-                    citation={
-                        "scope_id": scope_id,
-                        "memory_ref": hit.memory_ref.model_dump(mode="json"),
-                        "entry_id": hit.entry_id,
-                        "entry_version_id": hit.entry_version_id,
-                    },
-                    content=hit.text[start:end],
-                    truncated=False,
-                    start=start,
-                    end=end,
-                )
-                if _rendered_bytes([*entries, entry]) > request.max_bytes:
-                    continue
-                entries.append(entry)
-                selected.append((id(hit), start, end))
-                origins.append(address)
-                fragments.append(
-                    PreparedContextFragment(address=address, start=start, end=end, text=entry.content)
-                )
+                ordered.append(group[depth])
                 progressed = True
             if not progressed:
                 break
             depth += 1
+        ordered.sort(key=lambda item: (-item[0], item[1], item[2]))
+
+        selected: list[tuple[int, int, int, int]] = []
+        entries: list[_PreparedContextEntry] = []
+        fragments: list[PreparedContextFragment] = []
+        origins: list[PreparedContextOrigin] = []
+        for _, _, _, start, end, hit, scope_id, _carried in ordered:
+            if any(
+                start < chosen_end and chosen_start < end
+                for chosen_hit, chosen_start, chosen_end in selected
+                if chosen_hit == id(hit)
+            ):
+                continue
+            address = MemoryEntryAddress(
+                memory=ArtifactAddress(scope_id=scope_id, artifact=hit.memory_ref),
+                entry_id=hit.entry_id,
+                entry_version_id=hit.entry_version_id,
+            )
+            entry = _PreparedContextEntry(
+                origin=address,
+                kind="memory",
+                citation={
+                    "scope_id": scope_id,
+                    "memory_ref": hit.memory_ref.model_dump(mode="json"),
+                    "entry_id": hit.entry_id,
+                    "entry_version_id": hit.entry_version_id,
+                },
+                content=hit.text[start:end],
+                truncated=False,
+                start=start,
+                end=end,
+            )
+            if _rendered_bytes([*entries, entry]) > request.max_bytes:
+                trimmed = _trim_entry(entry, entries, request.max_bytes, terms)
+                if trimmed is None:
+                    continue
+                entry = trimmed
+                start = entry.start
+                end = entry.end
+            entries.append(entry)
+            selected.append((id(hit), start, end))
+            origins.append(address)
+            fragments.append(
+                PreparedContextFragment(address=address, start=start, end=end, text=entry.content)
+            )
         if not entries:
             return None, (), PreparedContextOmissions(), ()
         return _render(entries), tuple(origins), PreparedContextOmissions(), tuple(fragments)
@@ -784,55 +797,264 @@ class PreparedContextBuilder:
 
 _EVIDENCE_TERM_PATTERN = re.compile(r"[a-z0-9]+|[一-鿿]+")
 _EVIDENCE_SENTENCE_TERMINATORS = ".!?。！？"
+# The weight a span's own length carries next to the query terms it holds.
+# The weight a span keeps for a query term another span already carried.
+_EVIDENCE_COVERED_WEIGHT = 0.25
+_EVIDENCE_ABBREVIATIONS = frozenset(
+    {
+        "al",
+        "approx",
+        "ca",
+        "cf",
+        "dr",
+        "e.g",
+        "ed",
+        "eds",
+        "eq",
+        "esp",
+        "est",
+        "etc",
+        "fig",
+        "figs",
+        "i.e",
+        "incl",
+        "mr",
+        "mrs",
+        "ms",
+        "no",
+        "nos",
+        "p",
+        "pp",
+        "prof",
+        "ref",
+        "refs",
+        "resp",
+        "sec",
+        "tab",
+        "vol",
+        "vs",
+    }
+)
+
+
+_STEM_SUFFIXES = (
+    "ational",
+    "tional",
+    "ization",
+    "iveness",
+    "fulness",
+    "ousness",
+    "ation",
+    "alism",
+    "aliti",
+    "iviti",
+    "biliti",
+    "icate",
+    "ative",
+    "alize",
+    "iciti",
+    "ical",
+    "ance",
+    "ence",
+    "ment",
+    "ness",
+    "ful",
+    "ant",
+    "ent",
+    "ism",
+    "ate",
+    "iti",
+    "ous",
+    "ive",
+    "ize",
+    "ion",
+    "al",
+    "er",
+    "ly",
+)
+_STEM_VOWELS = frozenset("aeiou")
+
+
+def _stem(term: str) -> str:
+    """Reduce one term to the stem its related word forms share.
+
+    A claim and the abstract it comes from rarely use the same word form:
+    ``metabolize`` answers a question about ``metabolizers``, and ``outcome``
+    about ``outcomes``. Matching the stems lets the evidence sentence be found
+    by the words the question actually uses.
+    """
+
+    if len(term) <= 3 or not term.isalpha():
+        return term
+    if term.endswith("ies") and len(term) > 4:
+        term = term[:-3] + "y"
+    elif term.endswith("sses"):
+        term = term[:-2]
+    elif term.endswith("ss"):
+        return term
+    elif term.endswith("s"):
+        term = term[:-1]
+    if term.endswith("eed"):
+        term = term[:-3] + "ee"
+    elif term.endswith("ed") and len(term) > 4:
+        term = term[:-2]
+    elif term.endswith("ing") and len(term) > 5:
+        term = term[:-3]
+    if len(term) > 3 and term[-1] == term[-2] and term[-1] not in "lsz":
+        term = term[:-1]
+    for suffix in _STEM_SUFFIXES:
+        if term.endswith(suffix) and len(term) - len(suffix) >= 3:
+            term = term[: -len(suffix)]
+            break
+    if term.endswith("e") and len(term) > 4:
+        term = term[:-1]
+    return term
+
+
+def _stemmed_terms(text: str) -> frozenset[str]:
+    """Return the stems of the terms one text carries."""
+
+    return frozenset(_stem(term) for term in _EVIDENCE_TERM_PATTERN.findall(text.lower()))
 
 
 def _query_terms(query: str) -> tuple[str, ...]:
     """Return the distinct lower case terms of one query."""
 
-    return tuple(dict.fromkeys(_EVIDENCE_TERM_PATTERN.findall(query.lower())))
+    return tuple(dict.fromkeys(_stem(term) for term in _EVIDENCE_TERM_PATTERN.findall(query.lower())))
 
 
 def _term_weights(
     terms: tuple[str, ...],
     memory_candidates: Sequence[PreparedMemoryCandidates],
 ) -> dict[str, float]:
-    """Weigh every query term by how rare it is among the candidate bodies."""
+    """Weigh every query term by how rare it is among the candidate bodies.
 
-    bodies = [hit.text.lower() for group in memory_candidates for hit in group.hits]
+    A term that only one candidate carries says far more about the evidence
+    than a term every candidate shares, so the weight grows with the log of
+    the ratio between the candidates that carry it and the ones that do not.
+    """
+
+    bodies = [_stemmed_terms(hit.text) for group in memory_candidates for hit in group.hits]
     total = max(1, len(bodies))
     weights: dict[str, float] = {}
     for term in terms:
         frequency = sum(1 for body in bodies if term in body)
-        weights[term] = total / (total + frequency)
+        weights[term] = math.log((total - frequency + 0.5) / (frequency + 0.5) + 1.0)
     return weights
 
 
 def _evidence_segments(text: str) -> tuple[tuple[int, int], ...]:
-    """Split one body into literal sentence spans with their character offsets."""
+    """Split one body into literal sentence spans with their character offsets.
+
+    A period that belongs to a number (``1.40``) or to an abbreviation
+    (``e.g.``) does not end a sentence, so an evidence sentence stays one span
+    and costs the budget once instead of several fragments.
+    """
 
     segments: list[tuple[int, int]] = []
     position = 0
     length = len(text)
     while position < length:
         index = position
-        while index < length and text[index] not in _EVIDENCE_SENTENCE_TERMINATORS:
+        while index < length:
+            character = text[index]
+            if character not in _EVIDENCE_SENTENCE_TERMINATORS:
+                index += 1
+                continue
+            if character == "." and _period_joins_sentence(text, index):
+                index += 1
+                continue
             index += 1
-        if index < length:
-            index += 1
+            break
         if text[position:index].strip():
             segments.append((position, index))
         position = index
     return tuple(segments)
 
 
+def _period_joins_sentence(text: str, index: int) -> bool:
+    """Whether the period at ``index`` belongs to the sentence it ends."""
+
+    if text[index + 1: index + 2].isdigit():
+        return True
+    start = index
+    while start > 0 and (text[start - 1].isalpha() or text[start - 1] == "."):
+        start -= 1
+    return text[start:index].casefold() in _EVIDENCE_ABBREVIATIONS
+
+
 def _segment_score(segment: str, terms: tuple[str, ...], weights: dict[str, float]) -> float:
     """Score one span by the query terms it carries."""
 
-    score = 0.0
-    for term in terms:
-        if term in segment:
-            score += weights.get(term, 0.0)
-    return score
+    carried = _stemmed_terms(segment)
+    return sum(weights.get(term, 0.0) for term in terms if term in carried)
+
+
+def _reorder_by_new_evidence(
+    ordered: list[tuple[float, int, int, int, int, object, str, frozenset[str]]],
+    weights: dict[str, float],
+) -> list[tuple[float, int, int, int, int, object, str, frozenset[str]]]:
+    """Order the spans so that each one adds evidence the earlier ones do not.
+
+    A span that repeats the words an earlier span already carried says little
+    about the answer, so it earns less than a span that brings a term the
+    budget has not paid for yet.
+    """
+
+    covered: set[str] = set()
+    remaining = list(ordered)
+    picked: list[tuple[float, int, int, int, int, object, str, frozenset[str]]] = []
+    while remaining:
+        def value(item):
+            score, length, rank, _start, _end, _hit, _scope, carried = item
+            fresh = sum(weights[term] for term in carried if term not in covered)
+            repeated = sum(weights[term] for term in carried if term in covered)
+            return -(fresh + _EVIDENCE_COVERED_WEIGHT * repeated)
+
+        best = min(remaining, key=lambda item: (value(item), item[2]))
+        remaining.remove(best)
+        picked.append(best)
+        covered |= best[7]
+    return picked
+
+
+def _trim_entry(
+    entry: _PreparedContextEntry,
+    entries: Sequence[_PreparedContextEntry],
+    max_bytes: int,
+    terms: Sequence[str],
+) -> _PreparedContextEntry | None:
+    """Shorten one span to the part of its body that still fits the budget.
+
+    The shortened span is still a literal slice of the source body, and it is
+    only kept when it carries a term of the query, so the leftover room is
+    spent on evidence rather than on filler.
+    """
+
+    content = entry.content
+    if not content or entry.start is None:
+        return None
+    low = 0
+    high = len(content)
+    best: _PreparedContextEntry | None = None
+    while low <= high:
+        middle = (low + high) // 2
+        candidate = replace(
+            entry,
+            content=content[:middle],
+            end=entry.start + middle,
+        )
+        if _rendered_bytes([*entries, candidate]) <= max_bytes:
+            best = candidate
+            low = middle + 1
+        else:
+            high = middle - 1
+    if best is None or best.end == best.start:
+        return None
+    carried = _stemmed_terms(best.content)
+    if not any(term in carried for term in terms):
+        return None
+    return best
 
 
 def _interleave(
