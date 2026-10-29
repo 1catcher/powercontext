@@ -400,12 +400,46 @@ def _rank_candidates(
         return []
     weights = _term_weights(query_terms, documents, total)
     weights.update(_term_weights(concepts, documents, total, weight=_CONCEPT_WEIGHT))
+    targets = _target_documents(texts, query_terms)
     scored: list[tuple[float, tuple[str, str]]] = []
     for key, document in documents.items():
+        if targets and _document_of(texts[key]) not in targets:
+            # The question names the company, so another company's pages are
+            # not its evidence, however many shared words they carry.
+            continue
         matched = sum(weights[term] for term in document if term in weights)
         scored.append((-matched, key))
+    if not scored:
+        for key, document in documents.items():
+            matched = sum(weights[term] for term in document if term in weights)
+            scored.append((-matched, key))
     scored.sort()
     return [candidates[key] for _score, key in scored if key in candidates]
+
+
+def _document_of(text: str) -> str:
+    """Return the document identifier one stored page starts with."""
+
+    return text.split("\n", 1)[0]
+
+
+def _target_documents(
+    texts: Mapping[tuple[str, str], str],
+    query_terms: Sequence[str],
+) -> set[str]:
+    """Return the documents whose identifier carries a name the question uses."""
+
+    documents = {_document_of(text) for text in texts.values()}
+    targets: set[str] = set()
+    for document in documents:
+        flat = re.sub(r"[^a-z0-9]", "", document.casefold())
+        for term in query_terms:
+            if len(term) < 3 or any(character.isdigit() for character in term):
+                continue
+            if term in flat:
+                targets.add(document)
+                break
+    return targets
 
 
 def _term_weights(
