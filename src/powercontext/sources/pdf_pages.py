@@ -42,7 +42,7 @@ _MAX_TERM_ROUNDS = 40
 # The number of concept rounds. The concept vocabulary is long, so it opens the rounds.
 _CONCEPT_ROUNDS = 12
 # The weight one concept term carries against the terms the question writes itself.
-_CONCEPT_WEIGHT = 2.0
+_CONCEPT_WEIGHT = 3.0
 # The byte bound one stored Memory entry body may take, including its page prefix.
 _ENTRY_BYTE_LIMIT = 8192
 _TERM_PATTERN = re.compile(r"[a-z0-9_]+")
@@ -51,15 +51,41 @@ _DIGIT_PATTERN = re.compile(r"\d+")
 # The reading of a financial concept in the vocabulary a report writes it in.
 # Every trigger of a pair has to be present, and a trigger matches a term that
 # starts with it, so ``cyclicality`` reaches the ``cyclical`` reading.
+_STATEMENT_VOCABULARY = (
+    "consolidated",
+    "statements",
+    "revenues",
+    "expenses",
+    "net",
+    "operating",
+    "income",
+    "earnings",
+    "profit",
+)
+_CAPITAL_VOCABULARY = (
+    "capital",
+    "expenditures",
+    "spending",
+    "property",
+    "plant",
+    "equipment",
+    "depreciation",
+    "assets",
+)
+_DISCUSSION_VOCABULARY = ("management", "discussion", "analysis", "results", "operations")
 _CONCEPT_VOCABULARY: tuple[tuple[tuple[str, ...], tuple[str, ...]], ...] = (
     (("quick",), ("current", "assets", "liabilities", "cash", "equivalents", "receivable", "inventories")),
     (("liquidity",), ("current", "assets", "liabilities", "cash", "equivalents")),
     (("gross", "margin"), ("net", "sales", "cost", "products", "services", "sold", "profit")),
     (("margin",), ("gross", "operating", "income", "profit", "earnings")),
+    (("margin",), _STATEMENT_VOCABULARY),
+    (("profitability",), _STATEMENT_VOCABULARY),
     (("ebitda",), ("operating", "income", "depreciation", "amortization")),
-    (("capex",), ("capital", "spending", "purchases", "property", "plant", "equipment")),
-    (("capital", "spending"), ("capital", "spending", "purchases", "property", "plant", "equipment")),
+    (("ebitda",), _STATEMENT_VOCABULARY),
+    (("capex",), _CAPITAL_VOCABULARY),
+    (("capital",), _CAPITAL_VOCABULARY),
     (("revenue",), ("net", "revenues", "total", "sales")),
+    (("revenue",), _STATEMENT_VOCABULARY),
     (("sales",), ("net", "revenues", "total", "sales")),
     (("income", "statement"), ("consolidated", "statements", "operations", "earnings", "costs")),
     (("balance", "sheet"), ("consolidated", "balance", "sheets", "assets", "liabilities", "equity")),
@@ -101,6 +127,9 @@ _CONCEPT_VOCABULARY: tuple[tuple[tuple[str, ...], tuple[str, ...]], ...] = (
     (("exchange",), ("currency", "exchange", "translation")),
     (("concentration",), ("concentration", "accounted", "percentage", "significant")),
     (("working", "capital"), ("working", "capital", "current", "receivable", "payable", "inventories")),
+    (("drove",), _DISCUSSION_VOCABULARY),
+    (("driven",), _DISCUSSION_VOCABULARY),
+    (("driver",), _DISCUSSION_VOCABULARY),
 )
 
 
