@@ -38,7 +38,7 @@ _CANDIDATE_LIMIT = 60
 # One term-only round keeps fewer candidates; a single term is a weak filter.
 _TERM_CANDIDATE_LIMIT = 20
 # The number of single-term rounds. Every extra round is one more database query.
-_MAX_TERM_ROUNDS = 40
+_MAX_TERM_ROUNDS = 24
 # The number of concept rounds. The concept vocabulary is long, so it opens the rounds.
 _CONCEPT_ROUNDS = 12
 # The weight one concept term carries against the terms the question writes itself.
