@@ -1197,7 +1197,7 @@ SOURCE_LIFECYCLE_NODES_TABLE = Table(
     Column("sequence", Integer, nullable=False),
     Column("available", Boolean, nullable=False),
     ForeignKeyConstraint(("scope_id",), ("pc_scopes.scope_id",), ondelete="CASCADE"),
-    Index("ix_pc_source_lifecycle_nodes_kind", "scope_id", "kind", "available"),
+    Index("ix_pc_source_lifecycle_nodes_kind", "scope_id", "kind"),
     CheckConstraint(
         "kind IN ('source', 'memory', 'topic')",
         name="ck_pc_source_lifecycle_nodes_kind",
