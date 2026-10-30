@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ReSearch 科研资料工作台</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header>
+  <div class="brand">
+    <h1>ReSearch 科研资料工作台</h1>
+    <p class="tagline">资料存 seekdb 全文检索 · 任务进度存 PowerContext 跨会话复用</p>
+  </div>
+  <div class="badges">
+    <span class="badge db" id="seekdb-badge">seekdb: 检测中</span>
+    <span class="badge mem" id="pc-badge">PowerContext: 检测中</span>
+  </div>
+</header>
+
+<main>
+  <section class="panel" id="panel-search">
+    <h2>资料检索 <span class="hint">全文检索（MATCH..AGAINST / LIKE）+ 类型过滤</span></h2>
+    <form id="search-form">
+      <input id="search-q" type="text" placeholder="例如：混合检索、向量索引、事务……" autocomplete="off">
+      <select id="search-kind">
+        <option value="">全部类型</option>
+        <option value="paper">论文笔记</option>
+        <option value="note">课程笔记</option>
+        <option value="doc">技术文档</option>
+      </select>
+      <button type="submit">检索</button>
+    </form>
+    <div id="search-meta" class="meta"></div>
+    <ul id="search-results" class="results"></ul>
+  </section>
+
+  <section class="panel" id="panel-ingest">
+    <h2>导入资料 <span class="hint">写入 seekdb materials 表，立即可检</span></h2>
+    <form id="ingest-form">
+      <div class="row">
+        <input id="ingest-title" type="text" placeholder="标题，例如：RAG 混合检索笔记" required>
+        <select id="ingest-kind">
+          <option value="note">课程笔记</option>
+          <option value="paper">论文笔记</option>
+          <option value="doc">技术文档</option>
+        </select>
+      </div>
+      <textarea id="ingest-content" rows="6" placeholder="粘贴正文内容……" required></textarea>
+      <button type="submit">导入</button>
+    </form>
+    <div id="ingest-msg" class="meta"></div>
+    <h3>资料库（最近 20 条）</h3>
+    <ul id="material-list" class="results"></ul>
+  </section>
+
+  <section class="panel" id="panel-state">
+    <h2>学习进度 <span class="hint">PowerContext 持久化，服务重启后自动恢复</span></h2>
+    <div class="row">
+      <div class="col">
+        <h3>待办清单</h3>
+        <textarea id="state-todo" rows="4" placeholder="每行一条，例如：复习向量索引、重读第 3 章"></textarea>
+      </div>
+      <div class="col">
+        <h3>笔记 / 薄弱点</h3>
+        <textarea id="state-notes" rows="4" placeholder="例如：对倒排索引合并算法还不熟"></textarea>
+      </div>
+    </div>
+    <div class="row">
+      <button id="save-state">保存进度</button>
+      <span id="state-msg" class="meta"></span>
+      <span id="state-updated" class="meta"></span>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <p>技术分工：seekdb 提供资料存储与全文检索；PowerContext 提供任务状态持久化与复用；
+     每次数据库查询与状态写入都会记录到 <code>app/state/access.log</code>，可核对技术实际作用。</p>
+</footer>
+
+<script src="/static/app.js"></script>
+</body>
+</html>
